@@ -1,33 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
-import { ChevronRight, List } from 'lucide-react-native';
+import { ChevronRight, GraduationCap } from 'lucide-react-native';
 import { API } from '../api';
 
-export default function ChapterSelectionScreen() {
+export default function ClassSelectionScreen() {
     const { colors } = useTheme();
     const navigation = useNavigation<any>();
-    const route = useRoute<any>();
-    const { bookId, bookName } = route.params || {};
-
-    const [chapters, setChapters] = useState<any[]>([]);
+    const [classes, setClasses] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (bookId) {
-            loadChapters();
-        } else {
-            console.error("No bookId provided");
-            setLoading(false);
-        }
-    }, [bookId]);
+        loadData();
+    }, []);
 
-    const loadChapters = async () => {
+    const loadData = async () => {
         try {
-            const data = await API.getChapters(bookId);
-            setChapters(data);
+            // First try seeding if empty (dev convenience)
+            await API.seedDb();
+            const data = await API.getClasses();
+            setClasses(data);
         } catch (error) {
             console.error(error);
         } finally {
@@ -37,15 +31,15 @@ export default function ChapterSelectionScreen() {
 
     const renderItem = ({ item }: { item: any }) => (
         <TouchableOpacity
-            style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-            onPress={() => navigation.navigate('ExamGenerator', { chapterId: item.id, chapterName: item.chapter_name })}
+            style={[styles.card, { backgroundColor: colors.card }]}
+            onPress={() => navigation.navigate('SubjectSelection', { classId: item.id, className: item.class_name })}
         >
-            <View style={[styles.iconContainer, { backgroundColor: 'rgba(236, 72, 153, 0.1)' }]}>
-                <List size={24} color={'#EC4899'} />
+            <View style={[styles.iconContainer, { backgroundColor: 'rgba(99, 102, 241, 0.1)' }]}>
+                <GraduationCap size={24} color={colors.primary} />
             </View>
             <View style={styles.textContainer}>
-                <Text style={[styles.title, { color: colors.text }]}>{item.chapter_name}</Text>
-                <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Generate Exam Questions</Text>
+                <Text style={[styles.title, { color: colors.text }]}>{item.class_name}</Text>
+                <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Select to view subjects</Text>
             </View>
             <ChevronRight size={20} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -54,21 +48,17 @@ export default function ChapterSelectionScreen() {
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             <View style={styles.header}>
-                <Text style={[styles.superTitle, { color: colors.textSecondary }]}>{bookName}</Text>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>Select Chapter</Text>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Select Class</Text>
             </View>
 
             {loading ? (
                 <ActivityIndicator size="large" color={colors.primary} style={styles.loader} />
             ) : (
                 <FlatList
-                    data={chapters}
+                    data={classes}
                     renderItem={renderItem}
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.listContent}
-                    ListEmptyComponent={
-                        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No chapters found.</Text>
-                    }
                 />
             )}
         </SafeAreaView>
@@ -83,10 +73,6 @@ const styles = StyleSheet.create({
         padding: 20,
         paddingBottom: 10,
     },
-    superTitle: {
-        fontSize: 14,
-        marginBottom: 4,
-    },
     headerTitle: {
         fontSize: 28,
         fontWeight: 'bold',
@@ -100,7 +86,6 @@ const styles = StyleSheet.create({
         padding: 16,
         borderRadius: 16,
         marginBottom: 16,
-        borderWidth: 1,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
@@ -128,10 +113,5 @@ const styles = StyleSheet.create({
     },
     loader: {
         marginTop: 50,
-    },
-    emptyText: {
-        textAlign: 'center',
-        marginTop: 50,
-        fontSize: 16,
     }
 });

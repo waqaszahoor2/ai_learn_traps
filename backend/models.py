@@ -1,6 +1,9 @@
-from sqlalchemy import create_engine, Column, String, Integer, Boolean, ForeignKey, JSON
+
+from sqlalchemy import create_engine, Column, String, Integer, Boolean, ForeignKey, JSON, Float, Text, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+import uuid
+import datetime
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./traps.db"
 
@@ -11,112 +14,66 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-# --- Core Domain Models ---
+# --- Educational Hierarchy Models ---
 
-class User(Base):
-    __tablename__ = "users"
+class ClassGrade(Base):
+    __tablename__ = "classes"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    class_name = Column(String, unique=True) # "Grade 9", "Grade 10"
+    subjects = relationship("Subject", back_populates="grade_class")
 
-    id = Column(String, primary_key=True, index=True) # UUID
-    name = Column(String)
-    xp = Column(Integer, default=0)
-    level = Column(Integer, default=1)
+class Subject(Base):
+    __tablename__ = "subjects"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    class_id = Column(String, ForeignKey("classes.id"))
+    subject_name = Column(String) # "Mathematics", "Physics"
     
-    # Relationships
-    responses = relationship("StudentResponse", back_populates="user")
+    grade_class = relationship("ClassGrade", back_populates="subjects")
+    books = relationship("Book", back_populates="subject")
 
-class Topic(Base):
-    __tablename__ = "topics"
+class Book(Base):
+    __tablename__ = "books"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    subject_id = Column(String, ForeignKey("subjects.id"))
+    book_name = Column(String)
+    file_path = Column(String, nullable=True) # Local path to uploaded PDF
+    processed = Column(Boolean, default=False) # Whether chapters/topics have been extracted
     
-    id = Column(String, primary_key=True, index=True)
-    subject = Column(String) # Math, Physics, etc.
-    topic_name = Column(String)
-    
-    concepts = relationship("Concept", back_populates="topic")
-    misconceptions = relationship("Misconception", back_populates="topic")
-
-class Concept(Base):
-    __tablename__ = "concepts"
-    
-    id = Column(String, primary_key=True, index=True)
-    topic_id = Column(String, ForeignKey("topics.id"))
-    correct_concept = Column(String)
-    
-    topic = relationship("Topic", back_populates="concepts")
-
-class Misconception(Base):
-    __tablename__ = "misconceptions"
-    
-    id = Column(String, primary_key=True, index=True)
-    topic_id = Column(String, ForeignKey("topics.id"))
-    wrong_concept = Column(String)
-    trap_type = Column(String) # e.g. "Linearity Bias"
-    
-    topic = relationship("Topic", back_populates="misconceptions")
-
-class Question(Base):
-    __tablename__ = "questions"
-
-    id = Column(String, primary_key=True, index=True)
-    topic_id = Column(String, ForeignKey("topics.id"), nullable=True)
-    topic = Column(String) # Denormalized for easier filtering
-    
-    text = Column(String) # question_text
-    explanation = Column(String)
-    
-    # Storing options structure as JSON is flexible: [{id, text, isCorrect, isTrap, feedback}]
-    options = Column(JSON) 
-    
-    # Specific columns requested
-    correct_option = Column(String) # Text of correct option
-    wrong_options = Column(JSON)    # List of strings
-    trap_type = Column(String)      # Type of trap used in this question
-
-    responses = relationship("StudentResponse", back_populates="question")
-
-class StudentResponse(Base):
-    __tablename__ = "student_responses"
-    
-    id = Column(String, primary_key=True, index=True)
-    user_id = Column(String, ForeignKey("users.id"))
-    question_id = Column(String, ForeignKey("questions.id"))
-    selected_option = Column(String)
-    trap_detected = Column(Boolean) # Did they fall for the trap?
-    timestamp = Column(String)
-    
-    user = relationship("User", back_populates="responses")
-    question = relationship("Question", back_populates="responses")
-
-# --- Textbook Processing Models (Preserved) ---
-
-class Textbook(Base):
-    __tablename__ = "textbooks"
-    
-    id = Column(String, primary_key=True, index=True)
-    title = Column(String)
-    subject = Column(String)
-    grade = Column(String)
-    board = Column(String)
-    filename = Column(String)
-    uploaded_at = Column(String)
+    subject = relationship("Subject", back_populates="books")
+    chapters = relationship("Chapter", back_populates="book")
 
 class Chapter(Base):
     __tablename__ = "chapters"
-    
-    id = Column(String, primary_key=True, index=True)
-    textbook_id = Column(String, ForeignKey("textbooks.id"))
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    book_id = Column(String, ForeignKey("books.id"))
+    chapter_name = Column(String)
     chapter_number = Column(Integer)
-    title = Column(String)
-    content_summary = Column(String)
-
-class ExtractedQuestion(Base):
-    __tablename__ = "extracted_questions"
+    page_start = Column(Integer) # Page number in PDF
+    page_end = Column(Integer)
+    content_summary = Column(Text, nullable=True)
     
-    id = Column(String, primary_key=True, index=True)
+    book = relationship("Book", back_populates="chapters")
+    generated_questions = relationship("GeneratedExamQuestion", back_populates="chapter")
+
+class GeneratedExamQuestion(Base):
+    __tablename__ = "generated_questions"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     chapter_id = Column(String, ForeignKey("chapters.id"))
-    question_type = Column(String)
-    text = Column(String)
-    answer = Column(String)
-    difficulty = Column(String)
+    
+    question_text = Column(Text)
+    options = Column(JSON, nullable=True) # For MCQs, stored as JSON list
+    correct_answer = Column(Text)
+    explanation = Column(Text) # Detailed explanation
+    question_type = Column(String) # "MCQ", "Short", "Long"
+    topic_tag = Column(String) # Topic identified by AI
+    
+    difficulty_level = Column(String) # Easy, Medium, Hard
+    exam_probability_score = Column(Float, default=0.5) 
+    is_most_important = Column(Boolean, default=False)
+    reference_page = Column(Integer, nullable=True) # Page number for reference
+    
+    chapter = relationship("Chapter", back_populates="generated_questions")
 
 def init_db():
     Base.metadata.create_all(bind=engine)

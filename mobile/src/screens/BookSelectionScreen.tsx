@@ -1,118 +1,75 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Image } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { useTheme } from '../context/ThemeContext';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Book, ChevronRight, Filter } from 'lucide-react-native';
+import { useTheme } from '../context/ThemeContext';
+import { ChevronRight, Book } from 'lucide-react-native';
+import { API } from '../api';
 
 export default function BookSelectionScreen() {
     const { colors } = useTheme();
     const navigation = useNavigation<any>();
-    const [loading, setLoading] = useState(true);
+    const route = useRoute<any>();
+    const { subjectId, subjectName } = route.params || {};
+
     const [books, setBooks] = useState<any[]>([]);
-    const [selectedClass, setSelectedClass] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetchBooks();
-    }, []);
+        if (subjectId) {
+            loadBooks();
+        } else {
+            console.error("No subjectId provided");
+            setLoading(false);
+        }
+    }, [subjectId]);
 
-    const fetchBooks = async () => {
+    const loadBooks = async () => {
         try {
-            const API_URL = 'http://10.0.2.2:8000';
-            const res = await fetch(`${API_URL}/textbooks`);
-            const data = await res.json();
+            const data = await API.getBooks(subjectId);
             setBooks(data);
-        } catch (e) {
-            console.error(e);
-            // Mock data for demo if backend is offline or empty
-            setBooks([
-                { id: '1', title: 'Mathematics', grade: '9', subject: 'Math', board: 'International' },
-                { id: '2', title: 'Physics Part 1', grade: '11', subject: 'Physics', board: 'Local' },
-                { id: '3', title: 'Biology Essentials', grade: '10', subject: 'Biology', board: 'International' },
-                { id: '4', title: 'Chemistry World', grade: '9', subject: 'Chemistry', board: 'Local' },
-            ]);
+        } catch (error) {
+            console.error(error);
         } finally {
             setLoading(false);
         }
     };
 
-    // Filter logic
-    const filteredBooks = selectedClass
-        ? books.filter(b => b.grade === selectedClass)
-        : books;
-
-    const uniqueClasses = Array.from(new Set(books.map(b => b.grade))).sort();
+    const renderItem = ({ item }: { item: any }) => (
+        <TouchableOpacity
+            style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onPress={() => navigation.navigate('ChapterSelection', { bookId: item.id, bookName: item.book_name })}
+        >
+            <View style={[styles.iconContainer, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+                <Book size={24} color={colors.primary} />
+            </View>
+            <View style={styles.textContainer}>
+                <Text style={[styles.title, { color: colors.text }]}>{item.book_name}</Text>
+                <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{item.board}</Text>
+            </View>
+            <ChevronRight size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
+    );
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
             <View style={styles.header}>
+                <Text style={[styles.superTitle, { color: colors.textSecondary }]}>{subjectName}</Text>
                 <Text style={[styles.headerTitle, { color: colors.text }]}>Select Book</Text>
             </View>
 
-            {/* Class Filter Chips */}
-            <View style={styles.filterContainer}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-                    <TouchableOpacity
-                        style={[
-                            styles.chip,
-                            {
-                                backgroundColor: !selectedClass ? colors.primary : colors.card,
-                                borderColor: colors.border
-                            }
-                        ]}
-                        onPress={() => setSelectedClass(null)}
-                    >
-                        <Text style={[styles.chipText, { color: !selectedClass ? '#fff' : colors.text }]}>All Classes</Text>
-                    </TouchableOpacity>
-
-                    {uniqueClasses.map(cls => (
-                        <TouchableOpacity
-                            key={cls}
-                            style={[
-                                styles.chip,
-                                {
-                                    backgroundColor: selectedClass === cls ? colors.primary : colors.card,
-                                    borderColor: colors.border
-                                }
-                            ]}
-                            onPress={() => setSelectedClass(cls)}
-                        >
-                            <Text style={[styles.chipText, { color: selectedClass === cls ? '#fff' : colors.text }]}>
-                                Class {cls}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
-            </View>
-
             {loading ? (
-                <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 20 }} />
+                <ActivityIndicator size="large" color={colors.primary} style={styles.loader} />
             ) : (
-                <ScrollView contentContainerStyle={styles.listContent}>
-                    {filteredBooks.length === 0 ? (
-                        <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 20 }}>No books found.</Text>
-                    ) : (
-                        filteredBooks.map((book) => (
-                            <TouchableOpacity
-                                key={book.id}
-                                style={[styles.bookCard, { backgroundColor: colors.card, borderColor: colors.highlight }]}
-                                onPress={() => navigation.navigate('ChapterSelection', { bookId: book.id, bookTitle: book.title })}
-                            >
-                                <View style={[styles.bookIcon, { backgroundColor: colors.highlight }]}>
-                                    <Book color={colors.primary} size={28} />
-                                </View>
-                                <View style={styles.bookInfo}>
-                                    <Text style={[styles.bookTitle, { color: colors.text }]}>{book.title}</Text>
-                                    <Text style={[styles.bookMeta, { color: colors.textSecondary }]}>
-                                        Class {book.grade} • {book.subject}
-                                    </Text>
-                                    <Text style={[styles.bookBoard, { color: colors.textSecondary }]}>{book.board}</Text>
-                                </View>
-                                <ChevronRight color={colors.textSecondary} size={24} />
-                            </TouchableOpacity>
-                        ))
-                    )}
-                </ScrollView>
+                <FlatList
+                    data={books}
+                    renderItem={renderItem}
+                    keyExtractor={(item) => item.id}
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={
+                        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No books found for this subject.</Text>
+                    }
+                />
             )}
         </SafeAreaView>
     );
@@ -124,68 +81,57 @@ const styles = StyleSheet.create({
     },
     header: {
         padding: 20,
-        borderBottomWidth: 1,
-        borderBottomColor: 'rgba(255,255,255,0.1)',
+        paddingBottom: 10,
+    },
+    superTitle: {
+        fontSize: 14,
+        marginBottom: 4,
     },
     headerTitle: {
-        fontSize: 24,
+        fontSize: 28,
         fontWeight: 'bold',
-    },
-    filterContainer: {
-        paddingVertical: 15,
-        borderBottomWidth: 0,
-    },
-    filterScroll: {
-        paddingHorizontal: 20,
-    },
-    chip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        marginRight: 10,
-        borderWidth: 1,
-    },
-    chipText: {
-        fontWeight: '600',
     },
     listContent: {
         padding: 20,
     },
-    bookCard: {
-        borderRadius: 16,
-        padding: 16,
-        marginBottom: 16,
+    card: {
         flexDirection: 'row',
         alignItems: 'center',
+        padding: 16,
+        borderRadius: 16,
+        marginBottom: 16,
         borderWidth: 1,
-        shadowColor: "#000",
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
-        shadowRadius: 4,
+        shadowRadius: 8,
         elevation: 3,
     },
-    bookIcon: {
-        width: 56,
-        height: 56,
-        borderRadius: 12,
-        justifyContent: 'center',
+    iconContainer: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
         alignItems: 'center',
+        justifyContent: 'center',
         marginRight: 16,
     },
-    bookInfo: {
+    textContainer: {
         flex: 1,
     },
-    bookTitle: {
+    title: {
         fontSize: 18,
-        fontWeight: 'bold',
+        fontWeight: '600',
         marginBottom: 4,
     },
-    bookMeta: {
+    subtitle: {
         fontSize: 14,
-        marginBottom: 2,
     },
-    bookBoard: {
-        fontSize: 12,
-        opacity: 0.7,
+    loader: {
+        marginTop: 50,
     },
+    emptyText: {
+        textAlign: 'center',
+        marginTop: 50,
+        fontSize: 16,
+    }
 });

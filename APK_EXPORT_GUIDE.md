@@ -51,7 +51,7 @@ If you have Android Studio and Java installed:
 
 Before distributing, verify:
 1.  **Backend Connectivity**: Ensure your Production APK points to a real server URL, not `localhost` or `10.0.2.2`. 
-    -   *Action*: Edit `src/screens/GameScreen.tsx` and `src/context/UserContext.tsx` to replace `http://10.0.2.2:8000` with your deployed backend URL (e.g., AWS/Render IP).
+    -   *Action*: Edit `src/api.ts` to replace `http://10.0.2.2:8000` with your deployed backend URL.
 2.  **Permissions**: React Native default permissions should suffice for this app.
 3.  **Assets**: Ensure all icons/images in `assets/` are correctly sized.
 

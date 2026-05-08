@@ -1,6 +1,8 @@
 fastapi
 uvicorn
 sqlalchemy
-spacy
-pydantic
 python-multipart
+pdfplumber
+spacy
+python-jose[cryptography]
+passlib[bcrypt]

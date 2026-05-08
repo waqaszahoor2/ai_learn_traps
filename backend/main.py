@@ -1,40 +1,24 @@
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
-from typing import List, Optional
-import uuid
+
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
+from typing import List, Optional
+from models import SessionLocal, init_db, ClassGrade, Subject, Book, Chapter, GeneratedExamQuestion
+from pdf_service import pdf_service
+from schemas import BookSchema, ChapterSchema, QuestionSchema, ClassGradeSchema, SubjectSchema
+import os
 
-from models import SessionLocal, Question as DBQuestion, User, init_db
-import models
-from ai_service import ai_service
-from datetime import datetime
+app = FastAPI(title="AI Exam Generator API")
 
-app = FastAPI(title="AI Learn Traps API")
+# Mount upload directory to serve PDFs
+from fastapi.staticfiles import StaticFiles
+UPLOAD_DIR = "uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
 
-# Initialize DB
+app.mount("/static", StaticFiles(directory=UPLOAD_DIR), name="static")
+
 init_db()
 
-# Pydantic Models for API
-class Option(BaseModel):
-    id: str
-    text: str
-    isCorrect: bool = False
-    isTrap: bool = False
-    feedback: Optional[str] = None
-
-class QuestionModel(BaseModel):
-    id: Optional[str] = None
-    text: str
-    topic: str
-    explanation: str
-    options: List[Option]
-
-class MistakeInput(BaseModel):
-    questionText: str
-    wrongAnswer: str
-    correctAnswer: str
-
-# Dependency
 def get_db():
     db = SessionLocal()
     try:
@@ -42,160 +26,64 @@ def get_db():
     finally:
         db.close()
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to AI Learn Traps API"}
+# --- Hierarchical Endpoints ---
 
-@app.get("/questions", response_model=List[QuestionModel])
-def get_questions(topic: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(DBQuestion)
-    if topic:
-        query = query.filter(DBQuestion.topic == topic)
-    return query.all()
+@app.get("/classes", response_model=List[ClassGradeSchema])
+def get_classes(db: Session = Depends(get_db)):
+    return db.query(ClassGrade).all()
 
-@app.post("/questions")
-def create_question(q: QuestionModel, db: Session = Depends(get_db)):
-    if not q.id:
-        q.id = str(uuid.uuid4())
-    
-    # Auto-generate trap feedback if missing using AI
-    for opt in q.options:
-        if opt.isTrap and not opt.feedback:
-            opt.feedback = ai_service.analyze_mistake(q.text, opt.text, [o.text for o in q.options if o.isCorrect][0])
+@app.get("/subjects/{class_id}", response_model=List[SubjectSchema])
+def get_subjects(class_id: str, db: Session = Depends(get_db)):
+    return db.query(Subject).filter(Subject.class_id == class_id).all()
 
-    # Calculate fields for new schema
-    correct_opt = next((o.text for o in q.options if o.isCorrect), "")
-    wrong_opts = [o.text for o in q.options if not o.isCorrect]
-
-    db_q = DBQuestion(
-        id=q.id,
-        text=q.text,
-        topic=q.topic,
-        explanation=q.explanation,
-        options=[opt.dict() for opt in q.options],
-        correct_option=correct_opt,
-        wrong_options=wrong_opts,
-        trap_type="Manual"
-    )
-    db.add(db_q)
-    db.commit()
-    return {"status": "created", "id": q.id}
-
-class AnswerInput(BaseModel):
-    user_id: str
-    question_id: str
-    selected_option_id: str
-    is_correct: bool
-    is_trap: bool
-
-@app.post("/submit-answer")
-def submit_answer(data: AnswerInput, db: Session = Depends(get_db)):
-    # 1. Update/Create User
-    user = db.query(User).filter(User.id == data.user_id).first()
-    if not user:
-        user = User(id=data.user_id, name="Student", xp=0, level=1)
-        db.add(user)
-    
-    # 2. Record Response
-    response = models.StudentResponse(
-        id=str(uuid.uuid4()),
-        user_id=data.user_id,
-        question_id=data.question_id,
-        selected_option=data.selected_option_id,
-        trap_detected=data.is_trap,
-        timestamp=datetime.utcnow().isoformat()
-    )
-    db.add(response)
-    
-    # 3. Update Stats (Simple Gamification)
-    if data.is_correct:
-        user.xp += 10
-        # Simple Level Formula: Level = (XP / 100) + 1
-        user.level = int((user.xp / 100) + 1)
-        
-    db.commit()
-    return {"status": "recorded", "current_xp": user.xp, "level": user.level}
-
-@app.get("/user-stats/{user_id}")
-def get_stats(user_id: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return {"xp": 0, "level": 1, "traps_avoided": 0}
-        
-    # Count traps avoided (Questions answered correctly where a trap existed?) 
-    # Or simple definition: Questions answered correctly.
-    # Let's define "Traps Avoided" as correct answers on questions that HAD a trap option.
-    # For simplicity, just return total correct.
-    
-    return {
-        "xp": user.xp, 
-        "level": user.level,
-        "name": user.name
-    }
-
-@app.get("/generate-question/{topic}")
-def generate_question_endpoint(topic: str):
-    try:
-        question_data = ai_service.generate_question(topic)
-        return question_data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Textbook Parsing Endpoints
-from fastapi import UploadFile, File, Form
-import shutil
-import os
-from textbook_processor import textbook_processor
-from models import Textbook, Chapter, ExtractedQuestion
-
-@app.post("/upload-textbook")
-def upload_textbook(
+@app.post("/upload_book")
+async def upload_book(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    subject: str = Form(...),
-    grade: str = Form(...),
-    board: str = Form(...),
+    subject_id: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    upload_dir = "uploaded_books"
-    os.makedirs(upload_dir, exist_ok=True)
+    # Save Upload
+    book = await pdf_service.save_upload(file=file, subject_id=subject_id, db=db)
     
-    file_location = f"{upload_dir}/{file.filename}"
-    with open(file_location, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    # Create DB Entry
-    book_id = str(uuid.uuid4())
-    new_book = Textbook(
-        id=book_id,
-        title=file.filename,
-        subject=subject,
-        grade=grade,
-        board=board,
-        filename=file_location,
-        uploaded_at=datetime.utcnow().isoformat()
-    )
-    db.add(new_book)
-    db.commit()
+    # Launch Background Processing
+    background_tasks.add_task(pdf_service.process_pdf, book.id, db)
     
-    # Trigger Processing (Ideally Background Task)
-    try:
-        textbook_processor.process_pdf(file_location, book_id, db)
-        return {"status": "success", "message": "Book uploaded and parsed successfully", "book_id": book_id}
-    except Exception as e:
-        return {"status": "partial_success", "message": f"Book uploaded but parsing failed: {str(e)}", "book_id": book_id}
+    return {"message": "Upload successful. Processing started.", "book_id": book.id}
 
-@app.get("/textbooks")
-def get_textbooks(db: Session = Depends(get_db)):
-    return db.query(Textbook).all()
+@app.get("/books/{subject_id}", response_model=List[BookSchema])
+def get_books(subject_id: str, db: Session = Depends(get_db)):
+    return db.query(Book).filter(Book.subject_id == subject_id).all()
 
-@app.get("/textbooks/{book_id}/chapters")
+@app.get("/chapters/{book_id}", response_model=List[ChapterSchema])
 def get_chapters(book_id: str, db: Session = Depends(get_db)):
-    return db.query(Chapter).filter(Chapter.textbook_id == book_id).all()
+    return db.query(Chapter).filter(Chapter.book_id == book_id).all()
 
-@app.get("/chapters/{chapter_id}/questions")
-def get_extracted_questions(chapter_id: str, db: Session = Depends(get_db)):
-    return db.query(ExtractedQuestion).filter(ExtractedQuestion.chapter_id == chapter_id).all()
+@app.get("/questions/{chapter_id}", response_model=List[QuestionSchema])
+def get_questions(chapter_id: str, db: Session = Depends(get_db)):
+    qs = db.query(GeneratedExamQuestion).filter(GeneratedExamQuestion.chapter_id == chapter_id).all()
+    # Pydantic will handle JSON field logic via `from_attributes` hopefully if the DB model has it as JSON
+    return qs
+
+@app.post("/seed")
+def seed(db: Session = Depends(get_db)):
+    if db.query(ClassGrade).first():
+        return {"msg": "Already seeded"}
+        
+    classes = ["Grade 9", "Grade 10", "Grade 11", "Grade 12"]
+    subjects = ["Mathematics", "Physics", "Chemistry", "Biology", "Computer Science"]
+    
+    for c in classes:
+        cg = ClassGrade(class_name=c)
+        db.add(cg)
+        db.commit()
+        db.refresh(cg)
+        
+        for s in subjects:
+            sub = Subject(class_id=cg.id, subject_name=s)
+            db.add(sub)
+        db.commit()
+    return {"msg": "Seeded"}
 
 if __name__ == "__main__":
     import uvicorn
